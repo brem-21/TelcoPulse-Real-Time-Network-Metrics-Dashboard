@@ -1,53 +1,80 @@
 import boto3
-import pandas as pd
+import csv
 import json
 import time
-from dotenv import load_dotenv
 import os
+import logging
+from dotenv import load_dotenv
 
-
+# Load environment variables from .env file
 load_dotenv()
 
-AWS_ACCESS_KEY_ID = os.getenv('access_key_id')
-AWS_SECRET_ACCESS_KEY = os.getenv('secret_access_key')
-AWS_REGION_NAME = os.getenv('region')
-DATA_PATH = os.getenv('data_loc')
-STREAM_NAME = os.getenv('stream_name')
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-SLEEP_TIME = 1 
+class KinesisCSVWriter:
+    def __init__(self):
+        """
+        Initialize the Kinesis CSV Writer using environment variables.
+        """
+        self.stream_name = os.getenv('stream_name')
+        self.region_name = os.getenv('region')
+        self.kinesis_client = boto3.client(
+            'kinesis',
+            aws_access_key_id=os.getenv('access_key_id'),
+            aws_secret_access_key=os.getenv('secret_access_key'),
+            region_name=self.region_name
+        )
 
-                               
-# Initialize Kinesis client
-kinesis_client = boto3.client('kinesis',
-                              aws_access_key_id=AWS_ACCESS_KEY_ID,
-                              aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-                              region_name=AWS_REGION_NAME)
-# Read CSV file
-df = pd.read_csv(DATA_PATH)
-# Loop through rows and stream selected fields
-for index, row in df.iterrows():
-    record = {
-        "timestamp": row["hour"],
-        "operator": row["operator"],
-        "network": row["network"],
-        "provider": row["provider"],
-        "activity": row["activity"],
-        "postal_code": str(row["postal_code"]),
-        "signal": float(row["signal"]),
-        "precision": float(row["precission"]),
-        "status": row["status"]
-    }
-    # record = row.to_json()  # Convert row to JSON string format
-    json_record = json.dumps(record)
-    partition_key = row["operator"]  # Use the operator as partition key
-    if pd.isna(partition_key) or not isinstance(partition_key, str) or not partition_key.strip():
-        print(f"Skipping record {index + 1}: Invalid PartitionKey -> {partition_key}")
-        continue
-    # Send to Kinesis stream
-    response = kinesis_client.put_record(
-        StreamName=STREAM_NAME,
-        Data=json_record,
-        PartitionKey=partition_key,
-    )
-    print(f"Sent record {index + 1}: {json_record}")
-    time.sleep(SLEEP_TIME)
+    def write_csv_to_kinesis(self, csv_file_path: str, partition_key_column: str = None) -> None:
+        """
+        Read CSV file and write records to Kinesis.
+
+        Args:
+            csv_file_path (str): Path to the CSV file
+            partition_key_column (str): Column name to use as partition key. If None, uses row number
+        """
+        try:
+            with open(csv_file_path, 'r') as csv_file:
+                csv_reader = csv.DictReader(csv_file)
+
+                for row_number, row in enumerate(csv_reader, 1):
+                    data = json.dumps(row)
+
+                    # Determine partition key
+                    raw_key = row.get(partition_key_column, '') if partition_key_column else ''
+                    partition_key = raw_key.strip() if isinstance(raw_key, str) else str(row_number)
+
+                    # Validate partition key, fallback if invalid
+                    if not partition_key:
+                        partition_key = str(row_number)
+
+                    try:
+                        response = self.kinesis_client.put_record(
+                            StreamName=self.stream_name,
+                            Data=data,
+                            PartitionKey=partition_key
+                        )
+                        logger.info(f"Successfully wrote record {row_number} to Kinesis. ShardId: {response['ShardId']}")
+                        time.sleep(0.1)
+                    except Exception as e:
+                        logger.error(f"Error writing record {row_number} to Kinesis: {str(e)}")
+                        raise
+
+        except Exception as e:
+            logger.error(f"Error processing CSV file: {str(e)}")
+            raise
+
+def main():
+    csv_file_path = os.getenv('data_loc')  # Load from .env
+
+    try:
+        writer = KinesisCSVWriter()
+        writer.write_csv_to_kinesis(csv_file_path, partition_key_column='operator')  # Use 'operator' as key
+        logger.info("Successfully processed all records")
+    except Exception as e:
+        logger.error(f"Failed to process CSV file: {str(e)}")
+
+if __name__ == "__main__":
+    main()
