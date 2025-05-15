@@ -32,8 +32,11 @@ TelcoPulse is a fictional telecom analytics company that aggregates real-time mo
 
 The following KPIs are calculated and visualized in near real-time:
 -  **Average Signal Strength per Operator**
+    ![dashboard](assets/dashboard1.png)
 -  **Average GPS Precision per Operator**
+    ![dashboard](assets/dashboard2.png)
 -  **Count of Network Statuses per Postal Code**
+    ![dashboard](assets/dashboard3.png)
 
 The Streamlit dashboard auto-refreshes at a configurable interval (e.g., every 5 minutes) to display the most up-to-date insights.
 
